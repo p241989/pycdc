@@ -34,7 +34,7 @@ static bool printClassDocstring = true;
 // shortcut for all top/pop calls
 static PycRef<ASTNode> StackPopTop(FastStack& stack)
 {
-    const auto node(stack.top());
+    const auto node{ stack.top() };
     stack.pop();
     return node;
 }
@@ -75,16 +75,13 @@ static void CheckIfExpr(FastStack& stack, PycRef<ASTBlock> curblock)
 PycRef<ASTNode> BuildFromCode(PycRef<PycCode> code, PycModule* mod)
 {
     PycBuffer source(code->code()->value(), code->code()->length());
-
     FastStack stack((mod->majorVer() == 1) ? 20 : code->stackSize());
     stackhist_t stack_hist;
-
     std::stack<PycRef<ASTBlock> > blocks;
     PycRef<ASTBlock> defblock = new ASTBlock(ASTBlock::BLK_MAIN);
     defblock->init();
     PycRef<ASTBlock> curblock = defblock;
     blocks.push(defblock);
-
     int opcode, operand;
     int curpos = 0;
     int pos = 0;
@@ -92,7 +89,6 @@ PycRef<ASTNode> BuildFromCode(PycRef<PycCode> code, PycModule* mod)
     bool else_pop = false;
     bool need_try = false;
     bool variable_annotations = false;
-
     while (!source.atEof()) {
 #if defined(BLOCK_DEBUG) || defined(STACK_DEBUG)
         fprintf(stderr, "%-7d", pos);
@@ -394,12 +390,6 @@ PycRef<ASTNode> BuildFromCode(PycRef<PycCode> code, PycModule* mod)
             break;
         case Pyc::BUILD_TUPLE_A:
             {
-                // if class is a closure code, ignore this tuple
-                PycRef<ASTNode> tos = stack.top();
-                if (tos->type() == ASTNode::NODE_LOADBUILDCLASS) {
-                    break;
-                }
-
                 ASTTuple::value_t values;
                 values.resize(operand);
                 for (int i=0; i<operand; i++) {
@@ -644,10 +634,7 @@ PycRef<ASTNode> BuildFromCode(PycRef<PycCode> code, PycModule* mod)
                 stack.pop();
                 PycRef<ASTNode> left = stack.top();
                 stack.pop();
-                auto arg = operand;
-                if (mod->verCompare(3, 12) >= 0)
-                    arg >>= 4; // changed under GH-100923
-                stack.push(new ASTCompare(left, right, arg));
+                stack.push(new ASTCompare(left, right, operand));
             }
             break;
         case Pyc::CONTAINS_OP_A:
@@ -1206,7 +1193,13 @@ PycRef<ASTNode> BuildFromCode(PycRef<PycCode> code, PycModule* mod)
 
                             PycRef<ASTBlock> tmp = curblock;
                             blocks.pop();
+                            if (blocks.size() == 0) {
+                               break; // changes
+                            }
+                            else
+                            {
                             curblock = blocks.top();
+                            }
                             if (should_add_for_block) {
                                 curblock->append(tmp.cast<ASTNode>());
                             }
@@ -1280,7 +1273,9 @@ PycRef<ASTNode> BuildFromCode(PycRef<PycCode> code, PycModule* mod)
                         prev = nil;
                     } else if (prev->blktype() == ASTBlock::BLK_ELSE) {
                         /* Special case */
-                        prev = blocks.top();
+                        if (blocks.size() != 0) {
+                        prev = blocks.top(); // changes
+                        } 
                         if (!push) {
                             stack = stack_hist.top();
                             stack_hist.pop();
@@ -1291,7 +1286,6 @@ PycRef<ASTNode> BuildFromCode(PycRef<PycCode> code, PycModule* mod)
                     }
 
                 } while (prev != nil);
-
                 curblock = blocks.top();
             }
             break;
@@ -1328,7 +1322,6 @@ PycRef<ASTNode> BuildFromCode(PycRef<PycCode> code, PycModule* mod)
 
                 do {
                     blocks.pop();
-
                     if (!blocks.empty())
                         blocks.top()->append(prev.cast<ASTNode>());
 
@@ -1365,23 +1358,29 @@ PycRef<ASTNode> BuildFromCode(PycRef<PycCode> code, PycModule* mod)
                         prev = nil;
                     } else if (prev->blktype() == ASTBlock::BLK_ELSE) {
                         /* Special case */
-                        prev = blocks.top();
+                        if (blocks.size() != 0) {
+                        prev = blocks.top(); // changes
+                        }
                         if (!push) {
                             stack = stack_hist.top();
                             stack_hist.pop();
                         }
                         push = false;
-
+                        
                         if (prev->blktype() == ASTBlock::BLK_MAIN) {
                             /* Something went out of control! */
                             prev = nil;
                         }
+                        
+                      if (blocks.size() == 0) {
+                       prev = nil; // changes
+                      }
                     } else if (prev->blktype() == ASTBlock::BLK_TRY
                             && prev->end() < pos+offs) {
                         /* Need to add an except/finally block */
                         stack = stack_hist.top();
                         stack.pop();
-
+                        
                         if (blocks.top()->blktype() == ASTBlock::BLK_CONTAINER) {
                             PycRef<ASTContainerBlock> cont = blocks.top().cast<ASTContainerBlock>();
                             if (cont->hasExcept()) {
@@ -1402,9 +1401,13 @@ PycRef<ASTNode> BuildFromCode(PycRef<PycCode> code, PycModule* mod)
                     }
 
                 } while (prev != nil);
-
-                curblock = blocks.top();
-
+                
+                  if (blocks.size() == 0) {
+                     curblock->setEnd(pos+offs); // changes
+                  } else {
+                      curblock = blocks.top(); // changes
+                  }
+                
                 if (curblock->blktype() == ASTBlock::BLK_EXCEPT) {
                     curblock->setEnd(pos+offs);
                 }
@@ -1487,17 +1490,6 @@ PycRef<ASTNode> BuildFromCode(PycRef<PycCode> code, PycModule* mod)
                 PycRef<ASTNode> name = stack.top();
                 if (name.type() != ASTNode::NODE_IMPORT) {
                     stack.pop();
-
-                    if (mod->verCompare(3, 12) >= 0) {
-                        if (operand & 1) {
-                            /* Changed in version 3.12:
-                            If the low bit of namei is set, then a NULL or self is pushed to the stack
-                            before the attribute or unbound method respectively. */
-                            stack.push(nullptr);
-                        }
-                        operand >>= 1;
-                    }
-
                     stack.push(new ASTBinary(name, new ASTName(code->getName(operand)), ASTBinary::BIN_ATTR));
                 }
             }
@@ -1525,7 +1517,6 @@ PycRef<ASTNode> BuildFromCode(PycRef<PycCode> code, PycModule* mod)
             }
             break;
         case Pyc::LOAD_DEREF_A:
-        case Pyc::LOAD_CLASSDEREF_A:
             stack.push(new ASTName(code->getCellVar(mod, operand)));
             break;
         case Pyc::LOAD_FAST_A:
@@ -1536,14 +1527,19 @@ PycRef<ASTNode> BuildFromCode(PycRef<PycCode> code, PycModule* mod)
             break;
         case Pyc::LOAD_GLOBAL_A:
             if (mod->verCompare(3, 11) >= 0) {
-                // Loads the global named co_names[namei>>1] onto the stack.
                 if (operand & 1) {
                     /* Changed in version 3.11: 
                     If the low bit of "NAMEI" (operand) is set, 
                     then a NULL is pushed to the stack before the global variable. */
                     stack.push(nullptr);
+                    /*
+                    and thats because for some reason for example 3 global functions: input, int, print.
+                    it tries to load: 1, 3, 5
+                    all though we have only 3 names, so thats should be: (1-1)/2 = 0, (3-1)/2 = 1, (5-1)/2 = 2
+                    i dont know why, maybe because of the null push, but thats a FIX for now.
+                    */
+                    operand = (int)((operand - 1) / 2);
                 }
-                operand >>= 1;
             }
             stack.push(new ASTName(code->getName(operand)));
             break;
@@ -1898,7 +1894,6 @@ PycRef<ASTNode> BuildFromCode(PycRef<PycCode> code, PycModule* mod)
             }
             break;
         case Pyc::WITH_CLEANUP:
-        case Pyc::WITH_CLEANUP_START:
             {
                 // Stack top should be a None. Ignore it.
                 PycRef<ASTNode> none = stack.top();
@@ -1920,9 +1915,6 @@ PycRef<ASTNode> BuildFromCode(PycRef<PycCode> code, PycModule* mod)
                     fprintf(stderr, "Something TERRIBLE happened! No matching with block found for WITH_CLEANUP at %d\n", curpos);
                 }
             }
-            break;
-        case Pyc::WITH_CLEANUP_FINISH:
-            /* Ignore this */
             break;
         case Pyc::SETUP_EXCEPT_A:
             {
@@ -2528,18 +2520,8 @@ static int cmp_prec(PycRef<ASTNode> parent, PycRef<ASTNode> child)
         return 1;   // Always parenthesize not(x)
     if (child.type() == ASTNode::NODE_BINARY) {
         PycRef<ASTBinary> binChild = child.cast<ASTBinary>();
-        if (parent.type() == ASTNode::NODE_BINARY) {
-            PycRef<ASTBinary> binParent = parent.cast<ASTBinary>();
-            if (binParent->right() == child) {
-                if (binParent->op() == ASTBinary::BIN_SUBTRACT &&
-                    binChild->op() == ASTBinary::BIN_ADD)
-                    return 1;
-                else if (binParent->op() == ASTBinary::BIN_DIVIDE &&
-                         binChild->op() == ASTBinary::BIN_MULTIPLY)
-                    return 1;
-            }
-            return binChild->op() - binParent->op();
-        }
+        if (parent.type() == ASTNode::NODE_BINARY)
+            return binChild->op() - parent.cast<ASTBinary>()->op();
         else if (parent.type() == ASTNode::NODE_COMPARE)
             return (binChild->op() == ASTBinary::BIN_LOG_AND ||
                     binChild->op() == ASTBinary::BIN_LOG_OR) ? 1 : -1;
@@ -3382,7 +3364,8 @@ void decompyle(PycRef<PycCode> code, PycModule* mod, std::ostream& pyc_output)
                 PycRef<ASTObject> src = store->src().cast<ASTObject>();
                 PycRef<PycString> srcString = src->object().try_cast<PycString>();
                 PycRef<ASTName> dest = store->dest().cast<ASTName>();
-                if (dest->name()->isEqual("__qualname__")) {
+                if (srcString != nullptr && srcString->isEqual(code->name().cast<PycObject>())
+                        && dest->name()->isEqual("__qualname__")) {
                     // __qualname__ = '<Class Name>'
                     // Automatically added by Python 3.3 and later
                     clean->removeFirst();
