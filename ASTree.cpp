@@ -1061,6 +1061,7 @@ PycRef<ASTNode> BuildFromCode(PycRef<PycCode> code, PycModule* mod)
         case Pyc::DICT_UPDATE_A:
         case Pyc::LIST_TO_TUPLE:
         case Pyc::CALL_FUNCTION_EX_A:
+        case Pyc::WITH_EXCEPT_START_A:
             {
                 PycRef<ASTNode> cond = stack.top();
                 PycRef<ASTCondBlock> ifblk;
