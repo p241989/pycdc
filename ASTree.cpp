@@ -1058,6 +1058,7 @@ PycRef<ASTNode> BuildFromCode(PycRef<PycCode> code, PycModule* mod)
         case Pyc::JUMP_IF_NOT_EXC_MATCH_A:
         case Pyc::MAP_ADD_A:
         case Pyc::RERAISE_A:
+        case Pyc::DICT_UPDATE
             {
                 PycRef<ASTNode> cond = stack.top();
                 PycRef<ASTCondBlock> ifblk;
